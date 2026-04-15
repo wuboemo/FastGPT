@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FastGPT 自定义知识库上传示例</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css" />
+    <style>
+      body {
+        margin: 0;
+        background: #f5f7fa;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+          "Noto Sans", sans-serif;
+      }
+      .page {
+        max-width: 720px;
+        margin: 40px auto;
+        padding: 0 16px;
+      }
+      .card {
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+        padding: 24px;
+      }
+      .title {
+        font-size: 22px;
+        font-weight: 600;
+        color: #303133;
+        margin-bottom: 10px;
+      }
+      .desc {
+        color: #606266;
+        line-height: 1.7;
+        margin-bottom: 24px;
+      }
+      .upload-box {
+        width: 100%;
+      }
+      .tip {
+        margin-top: 12px;
+        color: #909399;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .result-box {
+        margin-top: 20px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #0f172a;
+        color: #e2e8f0;
+        border-radius: 10px;
+        padding: 16px;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .footer {
+        margin-top: 20px;
+        color: #909399;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app" class="page">
+      <div class="card">
+        <div class="title">FastGPT 自定义知识库上传</div>
+        <div class="desc">
+          这个页面会把文件上传到 FastGPT 新增的直传接口，再由后端复用原有逻辑：
+          <b>存储文件到 MinIO/S3</b>、<b>创建 collection</b>、<b>触发解析和向量化</b>。
+        </div>
+
+        <el-form label-width="120px" @submit.native.prevent>
+          <el-form-item label="FastGPT 地址">
+            <el-input
+              v-model.trim="form.baseUrl"
+              placeholder="例如：http://127.0.0.1:3000"
+              clearable
+            ></el-input>
+          </el-form-item>
+
+          <el-form-item label="Dataset ID">
+            <el-input
+              v-model.trim="form.datasetId"
+              placeholder="请输入知识库 datasetId"
+              clearable
+            ></el-input>
+          </el-form-item>
+
+          <el-form-item label="API Key">
+            <el-input
+              v-model.trim="form.apiKey"
+              placeholder="请输入 FastGPT API Key"
+              show-password
+              clearable
+            ></el-input>
+          </el-form-item>
+
+          <el-form-item label="集合名称">
+            <el-input
+              v-model.trim="form.name"
+              placeholder="可选，不填则默认使用文件名"
+              clearable
+            ></el-input>
+          </el-form-item>
+
+          <el-form-item label="训练模式">
+            <el-select v-model="form.trainingType" placeholder="请选择训练模式" style="width: 100%">
+              <el-option label="chunk" value="chunk"></el-option>
+              <el-option label="qa" value="qa"></el-option>
+            </el-select>
+          </el-form-item>
+
+          <el-form-item label="自动索引">
+            <el-switch v-model="form.autoIndexes"></el-switch>
+          </el-form-item>
+
+          <el-form-item label="PDF OCR 解析">
+            <el-switch v-model="form.customPdfParse"></el-switch>
+          </el-form-item>
+
+          <el-form-item label="切块大小">
+            <el-input-number
+              v-model="form.chunkSize"
+              :min="128"
+              :max="8192"
+              :step="128"
+            ></el-input-number>
+          </el-form-item>
+
+          <el-form-item label="索引大小">
+            <el-input-number
+              v-model="form.indexSize"
+              :min="128"
+              :max="4096"
+              :step="128"
+            ></el-input-number>
+          </el-form-item>
+
+          <el-form-item label="上传文件">
+            <el-upload
+              class="upload-box"
+              action=""
+              :show-file-list="true"
+              :auto-upload="false"
+              :limit="1"
+              :file-list="fileList"
+              :on-change="handleChange"
+              :on-remove="handleRemove"
+              :http-request="submitUpload"
+            >
+              <el-button slot="trigger" type="primary" plain>选择文件</el-button>
+              <el-button
+                style="margin-left: 12px"
+                type="primary"
+                :loading="uploading"
+                @click="triggerSubmit"
+              >
+                上传到知识库
+              </el-button>
+            </el-upload>
+
+            <div class="tip">
+              支持 txt、pdf、docx、xlsx、csv、md、html、pptx 等，由 FastGPT 后端负责解析。
+            </div>
+          </el-form-item>
+        </el-form>
+
+        <el-progress
+          v-if="uploading"
+          :percentage="uploadProgress"
+          :stroke-width="16"
+          status="success"
+        ></el-progress>
+
+        <div v-if="resultText" class="result-box">{{ resultText }}</div>
+
+        <div class="footer">
+          接口地址：
+          <code>/api/core/dataset/collection/create/directUpload</code>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/vue@2/dist/vue.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://unpkg.com/element-ui/lib/index.js"></script>
+    <script>
+      new Vue({
+        el: '#app',
+        data: function () {
+          return {
+            uploading: false,
+            uploadProgress: 0,
+            fileList: [],
+            currentFile: null,
+            resultText: '',
+            form: {
+              baseUrl: window.location.origin,
+              datasetId: '',
+              apiKey: '',
+              name: '',
+              trainingType: 'chunk',
+              autoIndexes: true,
+              customPdfParse: false,
+              chunkSize: 1024,
+              indexSize: 512
+            }
+          };
+        },
+        methods: {
+          handleChange: function (file, fileList) {
+            this.fileList = fileList.slice(-1);
+            this.currentFile = file.raw || null;
+          },
+          handleRemove: function () {
+            this.fileList = [];
+            this.currentFile = null;
+          },
+          triggerSubmit: function () {
+            if (!this.currentFile) {
+              this.$message.warning('请先选择文件');
+              return;
+            }
+            if (!this.form.baseUrl) {
+              this.$message.warning('请填写 FastGPT 地址');
+              return;
+            }
+            if (!this.form.datasetId) {
+              this.$message.warning('请填写 datasetId');
+              return;
+            }
+            if (!this.form.apiKey) {
+              this.$message.warning('请填写 API Key');
+              return;
+            }
+
+            this.submitUpload({ file: this.currentFile });
+          },
+          submitUpload: async function (option) {
+            var file = option.file;
+            var formData = new FormData();
+
+            formData.append('file', file, encodeURIComponent(file.name));
+            formData.append(
+              'data',
+              JSON.stringify({
+                datasetId: this.form.datasetId,
+                name: this.form.name || undefined,
+                trainingType: this.form.trainingType,
+                autoIndexes: this.form.autoIndexes,
+                customPdfParse: this.form.customPdfParse,
+                chunkSize: this.form.chunkSize,
+                indexSize: this.form.indexSize
+              })
+            );
+
+            this.uploading = true;
+            this.uploadProgress = 0;
+            this.resultText = '';
+
+            try {
+              var response = await axios.post(
+                this.form.baseUrl.replace(/\/$/, '') +
+                  '/api/core/dataset/collection/create/directUpload',
+                formData,
+                {
+                  headers: {
+                    'Content-Type': 'multipart/form-data',
+                    Authorization: 'Bearer ' + this.form.apiKey
+                  },
+                  timeout: 10 * 60 * 1000,
+                  onUploadProgress: function (event) {
+                    if (!event.total) return;
+                    this.uploadProgress = Math.min(
+                      99,
+                      Math.round((event.loaded / event.total) * 100)
+                    );
+                  }.bind(this)
+                }
+              );
+
+              this.uploadProgress = 100;
+              this.resultText = JSON.stringify(response.data, null, 2);
+              this.$message.success('上传成功，已进入 FastGPT 的解析/向量化流程');
+            } catch (error) {
+              var message =
+                (error.response && error.response.data && error.response.data.message) ||
+                (error.response && typeof error.response.data === 'string' && error.response.data) ||
+                error.message ||
+                '上传失败';
+              this.resultText = JSON.stringify(
+                {
+                  error: message,
+                  detail: error.response ? error.response.data : null
+                },
+                null,
+                2
+              );
+              this.$message.error(message);
+            } finally {
+              this.uploading = false;
+            }
+          }
+        }
+      });
+    </script>
+  </body>
+</html>
