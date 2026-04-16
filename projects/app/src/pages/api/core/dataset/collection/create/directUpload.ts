@@ -3,21 +3,25 @@ import { readFile } from 'node:fs/promises';
 import { NextAPI } from '@/service/middleware/entry';
 import { getUploadModel } from '@fastgpt/service/common/file/multer';
 import { removeFilesByPaths } from '@fastgpt/service/common/file/utils';
+import { uploadFile } from '@fastgpt/service/common/file/gridfs/controller';
 import { authDataset } from '@fastgpt/service/support/permission/dataset/auth';
 import { WritePermissionVal } from '@fastgpt/global/support/permission/constant';
 import { getS3DatasetSource } from '@fastgpt/service/common/s3/sources/dataset/index';
 import { createCollectionAndInsertData } from '@fastgpt/service/core/dataset/collection/controller';
 import { DatasetCollectionTypeEnum } from '@fastgpt/global/core/dataset/constants';
 import type { FileCreateDatasetCollectionParams } from '@fastgpt/global/core/dataset/api';
+import { BucketNameEnum } from '@fastgpt/global/common/file/constants';
 
 type DirectUploadBody = Omit<FileCreateDatasetCollectionParams, 'fileMetadata'> & {
   name?: string;
+  storageMode?: 'minio' | 'mongo';
 };
 
 type DirectUploadResponse = Promise<{
   collectionId: string;
   fileId: string;
   filename: string;
+  storageMode: 'minio' | 'mongo';
   results: {
     insertLen: number;
   };
@@ -48,16 +52,29 @@ async function handler(
       datasetId: data.datasetId
     });
 
-    const fileBuffer = await readFile(file.path);
-    const fileId = await getS3DatasetSource().uploadDatasetFileByBuffer({
-      datasetId: data.datasetId,
-      buffer: fileBuffer,
-      filename: file.originalname
-    });
+    const storageMode = data.storageMode || 'minio';
+    const fileId =
+      storageMode === 'mongo'
+        ? await uploadFile({
+            teamId,
+            uid: tmbId,
+            bucketName: BucketNameEnum.dataset,
+            path: file.path,
+            filename: file.originalname,
+            contentType: file.mimetype
+          })
+        : await (async () => {
+            const fileBuffer = await readFile(file.path);
+            return getS3DatasetSource().uploadDatasetFileByBuffer({
+              datasetId: data.datasetId,
+              buffer: fileBuffer,
+              filename: file.originalname
+            });
+          })();
 
     removeFilesByPaths(filePaths);
 
-    const { collectionMetadata, name, ...collectionData } = data;
+    const { collectionMetadata, name, storageMode: _, ...collectionData } = data;
     const { collectionId, insertResults } = await createCollectionAndInsertData({
       dataset,
       createCollectionParams: {
@@ -79,6 +96,7 @@ async function handler(
       collectionId,
       fileId,
       filename: file.originalname,
+      storageMode,
       results: insertResults
     };
   } catch (error) {
