@@ -5,7 +5,7 @@ import { getUploadModel } from '@fastgpt/service/common/file/multer';
 import { removeFilesByPaths } from '@fastgpt/service/common/file/utils';
 import { authDataset } from '@fastgpt/service/support/permission/dataset/auth';
 import { WritePermissionVal } from '@fastgpt/global/support/permission/constant';
-import { getS3DatasetSource } from '@fastgpt/service/common/s3/sources/dataset';
+import { getS3DatasetSource } from '@fastgpt/service/common/s3/sources/dataset/index';
 import { createCollectionAndInsertData } from '@fastgpt/service/core/dataset/collection/controller';
 import { DatasetCollectionTypeEnum } from '@fastgpt/global/core/dataset/constants';
 import type { FileCreateDatasetCollectionParams } from '@fastgpt/global/core/dataset/api';
